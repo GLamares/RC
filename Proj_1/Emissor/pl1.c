@@ -92,7 +92,7 @@ int main(int argc, char *argv[])
     // Create string to send
     unsigned char buf[BUF_SIZE] = {0};
     
-    unsigned char SET[] = {0X7E, 0X03, 0X03, 0X00, 0X7E};
+    unsigned char SET[] = {0x7E, 0x03, 0x03, 0x00, 0x7E};
     
     /*for (int i = 0; i < BUF_SIZE; i++)
     {
@@ -109,6 +109,10 @@ int main(int argc, char *argv[])
 
     // Wait until all bytes have been written to the serial port
     sleep(1);
+    
+    unsigned char UA[5];
+    int bytes2 = read(fd, UA, 5);
+    buf[bytes2] = '\0';
 
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
@@ -116,6 +120,7 @@ int main(int argc, char *argv[])
         perror("tcsetattr");
         exit(-1);
     }
+    printf("teste");
 
     close(fd);
 
