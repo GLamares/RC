@@ -113,6 +113,10 @@ int main(int argc, char *argv[])
     unsigned char UA[5];
     int bytes2 = read(fd, UA, 5);
     buf[bytes2] = '\0';
+    for(int i = 0; i < sizeof(UA); i++){
+        printf("var=0x%X\n", UA[i]);
+    }
+    
 
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
@@ -120,7 +124,6 @@ int main(int argc, char *argv[])
         perror("tcsetattr");
         exit(-1);
     }
-    printf("teste");
 
     close(fd);
 

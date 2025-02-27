@@ -23,26 +23,25 @@
 
 volatile int STOP = FALSE;
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]){
     // Program usage: Uses either COM1 or COM2
     const char *serialPortName = argv[1];
 
-    if (argc < 2)
-    {
-        printf("Incorrect program usage\n"
-               "Usage: %s <SerialPort>\n"
-               "Example: %s /dev/ttyS1\n",
-               argv[0],
-               argv[0]);
+    if (argc < 2){
+        
+    printf("Incorrect program usage\n"
+            "Usage: %s <SerialPort>\n"
+            "Example: %s /dev/ttyS1\n",
+            argv[0],
+            argv[0]);
         exit(1);
     }
 
     // Open serial port device for reading and writing and not as controlling tty
     // because we don't want to get killed if linenoise sends CTRL-C.
     int fd = open(serialPortName, O_RDWR | O_NOCTTY);
-    if (fd < 0)
-    {
+    if (fd < 0){
+
         perror(serialPortName);
         exit(-1);
     }
@@ -51,8 +50,8 @@ int main(int argc, char *argv[])
     struct termios newtio;
 
     // Save current port settings
-    if (tcgetattr(fd, &oldtio) == -1)
-    {
+    if (tcgetattr(fd, &oldtio) == -1){
+
         perror("tcgetattr");
         exit(-1);
     }
@@ -80,8 +79,8 @@ int main(int argc, char *argv[])
     tcflush(fd, TCIOFLUSH);
 
     // Set new port settings
-    if (tcsetattr(fd, TCSANOW, &newtio) == -1)
-    {
+    if (tcsetattr(fd, TCSANOW, &newtio) == -1){
+
         perror("tcsetattr");
         exit(-1);
     }
@@ -95,26 +94,32 @@ int main(int argc, char *argv[])
     unsigned char buf2[5];  
     int contador=0;
 
-    while (STOP == FALSE)
-    {
+    while (STOP == FALSE){
         // Returns after 5 chars have been input
         int bytes = read(fd, buf2, 5);
         buf[bytes] = '\0'; // Set end of string to '\0', so we can printf
 
-    for(int i=0; i < sizeof(buf2); i++)
-       printf("var=0x%X\n", buf2[i]);
-        if (buf[0] == 'z')
-            STOP = TRUE;
-    }
+        for(int i=0; i < sizeof(buf2); i++){
 
-    for(int i=0; i < sizeof(buf2); i++)
-    { if(buf2[i]==SET[i])   
-        contador++; 
-    }
+            printf("var=0x%X\n", buf2[i]);
 
-    if(contador==5)
-    {int bytes2 = write(fd, UA, 5);
-    printf("%d bytes written\n", bytes2);
+            if (buf[0] == 'z')
+                STOP = TRUE;
+        }
+
+        for(int i = 0; i < sizeof(buf2); i++){
+            
+            printf("Received: 0x%X, Expected: 0x%X\n", buf2[i], SET[i]);
+
+            if(buf2[i] == SET[i])
+                contador++;
+        }
+    
+
+    if(contador==5){
+
+        int bytes2 = write(fd, UA, 5);
+        printf("%d bytes written\n", bytes2);
     }
     
 
@@ -122,8 +127,8 @@ int main(int argc, char *argv[])
     // of the protocol indicated in the Lab guide
 
     // Restore the old port settings
-    if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
-    {
+    if (tcsetattr(fd, TCSANOW, &oldtio) == -1){
+
         perror("tcsetattr");
         exit(-1);
     }
@@ -131,4 +136,5 @@ int main(int argc, char *argv[])
     close(fd);
 
     return 0;
+    }
 }

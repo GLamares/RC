@@ -1,0 +1,1 @@
+Cable.c permite fazer a simulação de uma porta série, sempre que quiser testar código em casa, compilar, correr e abrir dois terminais com duas portas series virtuais S10 E S11
