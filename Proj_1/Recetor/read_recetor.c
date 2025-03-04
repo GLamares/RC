@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
@@ -22,14 +23,103 @@
 #define BUF_SIZE 256
 
 volatile int STOP = FALSE;
+unsigned char A = 0x03, C = 0x03, BCC;
+typedef enum{
+
+    Start,
+    FLAGRCV,
+    ARCV,
+    CRCV,
+    BCCOK,
+    PARA
+
+} stateNames;
+
+stateNames currentState = Start;
+bool FLAG_RCV;
+bool Other_RCV;
+bool A_RCV;
+bool C_RCV;
+
+unsigned char receivedByte;
+
+void init_SM() {
+    currentState = Start;  // Estado inicial
+}
+
+// Função da Máquina de Estados
+void state_machine(unsigned char byte) {
+    switch (currentState){
+
+        case Start:
+
+            if (byte == 0x7E)
+                currentState = FLAG_RCV;
+
+            break;
+
+        case FLAGRCV:
+
+            if (byte == A)
+                currentState = ARCV;
+
+            else if (byte != 0x7E)
+                currentState = Start;
+
+            break;
+
+        case ARCV:
+            if (byte == C)
+                currentState = CRCV;
+
+            else if (byte == 0x7E)
+                currentState = FLAGRCV;
+
+            else
+                currentState = Start;
+
+            break;
+
+        case CRCV:
+
+            if (byte == BCC)
+                currentState = BCCOK;
+
+            else if (byte == 0x7E)
+                currentState = FLAGRCV;
+
+            else
+                currentState = Start;
+
+            break;
+
+        case BCCOK:
+            if (byte == 0x7E){
+                  // FLAG final recebida
+                currentState = PARA;
+                STOP = 1; // Finaliza a máquina de estados
+            } 
+            
+            else
+                currentState = Start;
+            
+            break;
+
+        default:
+
+            currentState = Start;
+            break;
+    }
+}
 
 int main(int argc, char *argv[]){
     // Program usage: Uses either COM1 or COM2
+    BCC = A ^ C;
     const char *serialPortName = argv[1];
 
     if (argc < 2){
         
-    printf("Incorrect program usage\n"
+        printf("Incorrect program usage\n"
             "Usage: %s <SerialPort>\n"
             "Example: %s /dev/ttyS1\n",
             argv[0],
@@ -88,41 +178,31 @@ int main(int argc, char *argv[]){
     printf("New termios structure set\n");
 
     // Loop for input
+
+    init_SM();
+
     unsigned char buf[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
     unsigned char UA[]={0x7E, 0x01, 0x07, 0x06, 0x7E};
     unsigned char SET[]={0x7E, 0x03, 0x03, 0x00, 0x7E};
     unsigned char buf2[5];  
-    int contador=0;
 
-    while (STOP == FALSE){
-        // Returns after 5 chars have been input
-        int bytes = read(fd, buf2, 5);
-        buf[bytes] = '\0'; // Set end of string to '\0', so we can printf
+    printf("Enum:",currentState);
 
-        for(int i=0; i < sizeof(buf2); i++){
+    while (currentState =! PARA){
 
-            printf("var=0x%X\n", buf2[i]);
+        printf(&currentState);
+        int res = read(fd, &receivedByte, 1);
 
-            if (buf[0] == 'z')
-                STOP = TRUE;
+        if (res > 0){
+
+            printf("Recebido: 0x%X\n", receivedByte);
+            state_machine(receivedByte); // Atualiza a ME com o byte recebido
         }
-
-        for(int i = 0; i < sizeof(buf2); i++){
-            
-            printf("Received: 0x%X, Expected: 0x%X\n", buf2[i], SET[i]);
-
-            if(buf2[i] == SET[i])
-                contador++;
-        }
-    
-
-    if(contador==5){
-
-        int bytes2 = write(fd, UA, 5);
-        printf("%d bytes written\n", bytes2);
     }
     
-
+    printf("SET recebido! Enviando UA...\n");
+    write(fd, UA, 5);
+    printf("UA enviado.\n");
     // The while() cycle should be changed in order to respect the specifications
     // of the protocol indicated in the Lab guide
 
@@ -136,5 +216,5 @@ int main(int argc, char *argv[]){
     close(fd);
 
     return 0;
-    }
 }
+
