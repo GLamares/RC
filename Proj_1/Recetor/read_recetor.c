@@ -26,8 +26,8 @@ volatile int STOP = FALSE;
 unsigned char A = 0x03, C = 0x03, BCC;
 typedef enum{
 
-    Start,
-    FLAGRCV,
+    Start, // isso é um 0
+    FLAGRCV, // isso é um 1
     ARCV,
     CRCV,
     BCCOK,
@@ -54,43 +54,34 @@ void state_machine(unsigned char byte) {
         case Start:
 
             if (byte == 0x7E)
-                currentState = FLAG_RCV;
-
+                currentState = FLAGRCV;
             break;
 
         case FLAGRCV:
 
             if (byte == A)
                 currentState = ARCV;
-
             else if (byte != 0x7E)
                 currentState = Start;
-
             break;
 
         case ARCV:
             if (byte == C)
                 currentState = CRCV;
-
             else if (byte == 0x7E)
                 currentState = FLAGRCV;
-
             else
                 currentState = Start;
-
             break;
 
         case CRCV:
 
             if (byte == BCC)
                 currentState = BCCOK;
-
             else if (byte == 0x7E)
                 currentState = FLAGRCV;
-
             else
                 currentState = Start;
-
             break;
 
         case BCCOK:
@@ -99,7 +90,6 @@ void state_machine(unsigned char byte) {
                 currentState = PARA;
                 STOP = 1; // Finaliza a máquina de estados
             } 
-            
             else
                 currentState = Start;
             
@@ -186,20 +176,21 @@ int main(int argc, char *argv[]){
     unsigned char SET[]={0x7E, 0x03, 0x03, 0x00, 0x7E};
     unsigned char buf2[5];  
 
-    printf("Enum:",currentState);
+    printf("Enum: %d\n",currentState);
 
-    while (currentState =! PARA){
-
-        printf(&currentState);
-        int res = read(fd, &receivedByte, 1);
-
-        if (res > 0){
-
-            printf("Recebido: 0x%X\n", receivedByte);
-            state_machine(receivedByte); // Atualiza a ME com o byte recebido
-        }
-    }
+    while (currentState != PARA){
+        
+    printf("Current state: %d\n", currentState);
     
+    int res = read(fd, &receivedByte, 1);
+
+    //printf("O valor de res é %d\n", res);
+
+    if (res > 0) {
+        printf("Recebido: 0x%X\n", receivedByte);
+        state_machine(receivedByte);
+    }
+}   
     printf("SET recebido! Enviando UA...\n");
     write(fd, UA, 5);
     printf("UA enviado.\n");
