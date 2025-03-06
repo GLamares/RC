@@ -10,6 +10,8 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <signal.h>
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
@@ -22,9 +24,95 @@
 #define BUF_SIZE 256
 
 volatile int STOP = FALSE;
+unsigned char A = 0x03, C = 0x07, BCC;
+int alarmCount = 0;
 
-int main(int argc, char *argv[])
-{
+typedef enum{
+
+    Start, // isso é um 0
+    FLAGRCV, // isso é um 1
+    ARCV,
+    CRCV,
+    BCCOK,
+    PARA
+
+} stateNames;
+
+stateNames currentState = Start;
+bool FLAG_RCV;
+bool Other_RCV;
+bool A_RCV;
+bool C_RCV;
+
+unsigned char receivedByte;
+
+void alarmHandler(int signal){
+
+    int alarmEnabled = FALSE;
+    alarmCount++;
+
+    printf("Alarm #%d\n", alarmCount);
+}
+
+void state_machine(unsigned char byte){
+    switch (currentState){
+
+        case Start:
+
+            if (byte == 0x7E)
+                currentState = FLAGRCV;
+            break;
+
+        case FLAGRCV:
+
+            if (byte == A)
+                currentState = ARCV;
+            else if (byte != 0x7E)
+                currentState = Start;
+            break;
+
+        case ARCV:
+            if (byte == C)
+                currentState = CRCV;
+            else if (byte == 0x7E)
+                currentState = FLAGRCV;
+            else
+                currentState = Start;
+            break;
+
+        case CRCV:
+
+            if (byte == A^C)
+                currentState = BCCOK;
+            else if (byte == 0x7E)
+                currentState = FLAGRCV;
+            else
+                currentState = Start;
+            break;
+
+        case BCCOK:
+            if (byte == 0x7E){
+                  // FLAG final recebida
+                currentState = PARA;
+                STOP = 1; // Finaliza a máquina de estados
+            } 
+            else
+                currentState = Start;
+            
+            break;
+
+        default:
+
+            currentState = Start;
+            break;
+    }
+}
+
+int main(int argc, char *argv[]){
+    
+    // Set alarm function handler
+    (void)signal(SIGALRM, alarmHandler);
+
     // Program usage: Uses either COM1 or COM2
     const char *serialPortName = argv[1];
 
@@ -88,10 +176,10 @@ int main(int argc, char *argv[])
     }
 
     printf("New termios structure set\n");
-
+BCC=A^C;
     // Create string to send
     unsigned char buf[BUF_SIZE] = {0};
-    
+
     unsigned char SET[] = {0x7E, 0x03, 0x03, 0x00, 0x7E};
     
     /*for (int i = 0; i < BUF_SIZE; i++)
@@ -109,10 +197,34 @@ int main(int argc, char *argv[])
 
     // Wait until all bytes have been written to the serial port
     sleep(1);
-    
+
+    printf("Enum: %d\n",currentState);
+
+    while (currentState != PARA){
+        
+        printf("Current state: %d\n", currentState);
+        
+        int res = read(fd, &receivedByte, 1);
+
+        //printf("O valor de res é %d\n", res);
+
+        if (res > 0){
+            
+            printf("Recebido: 0x%02X\n", receivedByte);
+            state_machine(receivedByte);
+        }
+    }   
+    printf("UA recebido!\n");
     unsigned char UA[5];
+    if(alarmEnabled == TRUE){
+    
+    
     int bytes2 = read(fd, UA, 5);
     buf[bytes2] = '\0';
+    
+    if(bytes2 != NULL){
+        alarm(0);
+    
     for(int i = 0; i < sizeof(UA); i++){
         printf("var=0x%X\n", UA[i]);
     }
