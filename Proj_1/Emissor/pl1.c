@@ -211,7 +211,7 @@ int main(int argc, char *argv[]){
         
         int res = read(fd, &receivedByte, 1);
 
-        //printf("O valor de res é %d\n", res);
+        printf("O valor de res é %d\n", res);
 
         if (res > 0){
             
@@ -239,15 +239,6 @@ int main(int argc, char *argv[]){
     }   
     printf("UA recebido! Cancelando alarme\n");
     alarm(0);
-
-    unsigned char UA[5];
-    int bytes2 = read(fd, UA, 5);
-    buf[bytes2] = '\0';
-    
-    for(int i = 0; i < sizeof(UA); i++)
-        printf("var=0x%X\n", UA[i]);
-    
-    
 
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1){
