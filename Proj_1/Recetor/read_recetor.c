@@ -11,6 +11,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <signal.h>
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
@@ -21,7 +22,10 @@
 #define TRUE 1
 
 #define BUF_SIZE 256
+#define MAX_RETRIES 3
 
+int alarmEnabled = FALSE;
+int alarmCount = 0;
 volatile int STOP = FALSE;
 unsigned char A = 0x03, C = 0x03, BCC;
 typedef enum{
@@ -42,6 +46,14 @@ bool A_RCV;
 bool C_RCV;
 
 unsigned char receivedByte;
+
+void alarmHandler(int signal){
+
+    alarmEnabled = FALSE;
+    alarmCount++;
+
+    printf("Alarm #%d\n", alarmCount);
+}
 
 void init_SM() {
     currentState = Start;  // Estado inicial
@@ -76,7 +88,7 @@ void state_machine(unsigned char byte) {
 
         case CRCV:
 
-            if (byte == BCC)
+            if (byte == (A^C))
                 currentState = BCCOK;
             else if (byte == 0x7E)
                 currentState = FLAGRCV;
@@ -88,7 +100,7 @@ void state_machine(unsigned char byte) {
             if (byte == 0x7E){
                   // FLAG final recebida
                 currentState = PARA;
-                STOP = 1; // Finaliza a máquina de estados
+                STOP = TRUE; // Finaliza a máquina de estados
             } 
             else
                 currentState = Start;
@@ -104,6 +116,7 @@ void state_machine(unsigned char byte) {
 
 int main(int argc, char *argv[]){
     // Program usage: Uses either COM1 or COM2
+    (void)signal(SIGALRM, alarmHandler);
     BCC = A ^ C;
     const char *serialPortName = argv[1];
 
@@ -172,7 +185,7 @@ int main(int argc, char *argv[]){
     init_SM();
 
     unsigned char buf[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
-    unsigned char UA[]={0x7E, 0x01, 0x07, 0x06, 0x7E};
+    unsigned char UA[]={0x7E, 0x01, 0x07,(A^C), 0x7E};
     unsigned char SET[]={0x7E, 0x03, 0x03, 0x00, 0x7E};
     unsigned char buf2[5];  
 
@@ -180,18 +193,38 @@ int main(int argc, char *argv[]){
 
     while (currentState != PARA){
         
-    printf("Current state: %d\n", currentState);
-    
-    int res = read(fd, &receivedByte, 1);
+        printf("Current state: %d\n", currentState);
+        
+        int res = read(fd, &receivedByte, 1);
 
-    //printf("O valor de res é %d\n", res);
+        //printf("O valor de res é %d\n", res);
 
-    if (res > 0) {
-        printf("Recebido: 0x%X\n", receivedByte);
-        state_machine(receivedByte);
-    }
-}   
+        if (res > 0) {
+            printf("Recebido: 0x%X\n", receivedByte);
+            state_machine(receivedByte);
+        }
+
+        // Se `SET` foi recebido, enviamos `UA`
+        if (currentState == PARA && alarmEnabled == FALSE) {
+            
+            printf("SET recebido! Enviando UA...\n");
+            write(fd, UA, 5);
+            alarmEnabled = TRUE; // Marca que o alarme foi ativado
+            alarm(3); // Ativa o alarme
+        }
+
+        // Se o alarme foi acionado, reenviar UA
+        if (alarmCount > 0 && alarmEnabled == FALSE) {
+            
+            printf("Timeout: Reenviando UA...\n");
+            write(fd, UA, 5);
+            alarm(3);
+            alarmEnabled = TRUE;
+        }
+    }   
     printf("SET recebido! Enviando UA...\n");
+    alarm(0);
+    
     write(fd, UA, 5);
     printf("UA enviado.\n");
     // The while() cycle should be changed in order to respect the specifications

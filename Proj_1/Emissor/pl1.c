@@ -17,6 +17,7 @@
 // included by <termios.h>
 #define BAUDRATE B38400
 #define _POSIX_SOURCE 1 // POSIX compliant source
+#define MAX_RETRIES 3
 
 #define FALSE 0
 #define TRUE 1
@@ -26,6 +27,8 @@
 volatile int STOP = FALSE;
 unsigned char A = 0x03, C = 0x07, BCC;
 int alarmCount = 0;
+int alarmEnabled = FALSE;
+int retransmissions = 0;
 
 typedef enum{
 
@@ -48,7 +51,7 @@ unsigned char receivedByte;
 
 void alarmHandler(int signal){
 
-    int alarmEnabled = FALSE;
+    alarmEnabled = FALSE;
     alarmCount++;
 
     printf("Alarm #%d\n", alarmCount);
@@ -176,7 +179,7 @@ int main(int argc, char *argv[]){
     }
 
     printf("New termios structure set\n");
-BCC=A^C;
+    BCC=A^C;
     // Create string to send
     unsigned char buf[BUF_SIZE] = {0};
 
@@ -200,6 +203,8 @@ BCC=A^C;
 
     printf("Enum: %d\n",currentState);
 
+    alarm(3);
+
     while (currentState != PARA){
         
         printf("Current state: %d\n", currentState);
@@ -213,26 +218,40 @@ BCC=A^C;
             printf("Recebido: 0x%02X\n", receivedByte);
             state_machine(receivedByte);
         }
+
+        if (alarmCount > retransmissions){
+
+            retransmissions++;
+
+            if (retransmissions < MAX_RETRIES){
+
+                printf("Timeout #%d: Retransmitindo SET...\n", retransmissions);
+                write(fd, SET, 5);
+                alarm(3);
+            } 
+            
+            else{
+
+                printf("Máximo de retransmissões atingido. Encerrando.\n");
+                exit(1);
+            }
+        }
     }   
-    printf("UA recebido!\n");
+    printf("UA recebido! Cancelando alarme\n");
+    alarm(0);
+
     unsigned char UA[5];
-    if(alarmEnabled == TRUE){
-    
-    
     int bytes2 = read(fd, UA, 5);
     buf[bytes2] = '\0';
     
-    if(bytes2 != NULL){
-        alarm(0);
-    
-    for(int i = 0; i < sizeof(UA); i++){
+    for(int i = 0; i < sizeof(UA); i++)
         printf("var=0x%X\n", UA[i]);
-    }
+    
     
 
     // Restore the old port settings
-    if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
-    {
+    if (tcsetattr(fd, TCSANOW, &oldtio) == -1){
+        
         perror("tcsetattr");
         exit(-1);
     }
@@ -241,3 +260,4 @@ BCC=A^C;
 
     return 0;
 }
+
