@@ -28,7 +28,6 @@ volatile int STOP = FALSE;
 unsigned char A = 0x03, C = 0x07, BCC;
 int alarmCount = 0;
 int alarmEnabled = FALSE;
-int retransmissions = 0;
 
 typedef enum{
 
@@ -159,7 +158,7 @@ int main(int argc, char *argv[]){
     // Set input mode (non-canonical, no echo,...)
     newtio.c_lflag = 0;
     newtio.c_cc[VTIME] = 0; // Inter-character timer unused
-    newtio.c_cc[VMIN] = 5;  // Blocking read until 5 chars received
+    newtio.c_cc[VMIN] = 0;  // Blocking read until 5 chars received
 
     // VTIME e VMIN should be changed in order to protect with a
     // timeout the reception of the following character(s)
@@ -185,60 +184,52 @@ int main(int argc, char *argv[]){
 
     unsigned char SET[] = {0x7E, 0x03, 0x03, 0x00, 0x7E};
     
-    /*for (int i = 0; i < BUF_SIZE; i++)
-    {
-        buf[i] = 'a' + i % 3;
-    }*/
-
     // In non-canonical mode, '\n' does not end the writing.
     // Test this condition by placing a '\n' in the middle of the buffer.
     // The whole buffer must be sent even with the '\n'.
+    
     buf[5] = '\n';
+    
+    currentState = Start;
+    printf("Enviando SET...\n");
+    write(fd, SET, 5);
+    alarmEnabled = TRUE;
+    alarm(3); // Inicia o timer
 
-    int bytes = write(fd, SET, 5);
-    printf("%d bytes written\n", bytes);
+    // **Loop de retransmissão até receber `UA` ou atingir `MAX_RETRIES`**
+    while (alarmCount < MAX_RETRIES){
 
-    // Wait until all bytes have been written to the serial port
-    sleep(1);
+        printf("DEBUG: AlarmEnabled: %d | AlarmCount: %d\n", alarmEnabled, alarmCount);
+        int res = read(fd, &receivedByte, 1);//res ou é 1 ou 0, é 1 se ler um byte e 0 se não
 
-    printf("Enum: %d\n",currentState);
+        if (res){
 
-    alarm(3);
-
-    while (currentState != PARA){
-        
-        printf("Current state: %d\n", currentState);
-        
-        int res = read(fd, &receivedByte, 1);
-
-        printf("O valor de res é %d\n", res);
-
-        if (res > 0){
-            
             printf("Recebido: 0x%02X\n", receivedByte);
             state_machine(receivedByte);
         }
 
-        if (alarmCount > retransmissions){
+        if (currentState == PARA){
 
-            retransmissions++;
-
-            if (retransmissions < MAX_RETRIES){
-
-                printf("Timeout #%d: Retransmitindo SET...\n", retransmissions);
-                write(fd, SET, 5);
-                alarm(3);
-            } 
-            
-            else{
-
-                printf("Máximo de retransmissões atingido. Encerrando.\n");
-                exit(1);
-            }
+            printf("UA recebido! Cancelando alarme.\n");
+            alarm(0);
+            alarmEnabled = FALSE;
+            break;
         }
-    }   
-    printf("UA recebido! Cancelando alarme\n");
-    alarm(0);
+
+        // **Se o alarme expirou e `UA` não foi recebido, reenviar `SET`**
+        if (!alarmEnabled && alarmCount < MAX_RETRIES){
+
+            printf("Timeout #%d: Reenviando SET...\n", alarmCount);
+            write(fd, SET, 5);
+            alarmEnabled = TRUE;
+            alarm(3);
+        }
+    }
+
+    if (alarmCount >= MAX_RETRIES) {
+        printf("Máximo de retransmissões atingido. Encerrando emissor.\n");
+        exit(1);
+    }
 
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1){
