@@ -199,7 +199,6 @@ int main(int argc, char *argv[]){
     // **Loop de retransmissão até receber `UA` ou atingir `MAX_RETRIES`**
     while (alarmCount < MAX_RETRIES){
 
-        printf("DEBUG: AlarmEnabled: %d | AlarmCount: %d\n", alarmEnabled, alarmCount);
         int res = read(fd, &receivedByte, 1);//res ou é 1 ou 0, é 1 se ler um byte e 0 se não
 
         if (res){
