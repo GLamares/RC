@@ -116,20 +116,6 @@ typedef enum{
 
 stateIFrame currentStateI = START_I;
 
-typedef enum {
-    START_I,
-    FLAG_RCV_I,
-    A_RCV_I,
-    C_RCV_I,
-    BCC1_OK_I,
-    DATA_RCV,
-    BCC2_OK,
-    END_I
-
-} stateIFrame;
-
-stateIFrame currentStateI = START_I;
-
 void init_SM_I() {
     currentStateI = START_I;  // Estado inicial
 }
@@ -263,6 +249,7 @@ void state_machine_I(unsigned char byte, int fd) {
 
                 send_ACK(fd, ns, FALSE);
                 currentStateI = END_I;
+                
             } 
             else{
 
@@ -401,10 +388,12 @@ int main(int argc, char *argv[]){
         if(rec > 0){
 
             printf("Recebido: 0x%X\n", receivedByte);
-            state_machine_I(receivedByte, fd);
+            state_machine_I(receivedByte, fd)
         }
     }
+
     printf("I frame recebido! Enviando RR");
+    send()
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1){
 
