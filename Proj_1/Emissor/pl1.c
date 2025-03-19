@@ -23,6 +23,117 @@
 
 volatile int STOP = FALSE;
 
+#define BUF_SIZE 256
+#define FLAG 0x7E
+#define A 0x03
+#define C_0 0x00  // Ns = 0
+#define C_1 0x40  // Ns = 1
+#define RR_0 0x05
+#define RR_1 0x85
+#define REJ_0 0x01
+#define REJ_1 0x81
+
+typedef enum{
+
+    START_TX,
+    FLAG_TX,
+    A_TX,
+    C_TX,
+    BCC1_TX,
+    DATA_TX,
+    BCC2_TX,
+    FLAG_END_TX,
+    WAIT_ACK,
+    RETRANSMIT_TX
+    
+} stateTxFrame;
+
+stateTxFrame currentStateTx = START_TX;
+
+// Variáveis de transmissão
+unsigned char txBuffer[BUF_SIZE];
+unsigned char ns = 0;  // Número de sequência (0 ou 1)
+
+// Inicializar máquina de estados do transmissor
+void init_SM_Tx(){
+
+    currentStateTx = START_TX;
+}
+
+// Função para calcular BCC2 (XOR de todos os bytes de dados)
+unsigned char calculate_BCC2(unsigned char *data, int length){
+
+    unsigned char bcc2 = 0;
+
+    for (int i = 0; i < length; i++)
+        bcc2 ^= data[i];
+    
+    return bcc2;
+}
+
+void state_machine_Tx(int fd, unsigned char *data, int length){
+
+    unsigned char receivedByte;
+    unsigned char expectedRR, expectedREJ;
+
+    if (ns == 0){
+
+        expectedRR = RR_1;
+        expectedREJ = REJ_0;
+    } 
+    else{
+
+        expectedRR = RR_0;
+        expectedREJ = REJ_1;
+    }
+
+    switch (currentStateTx){
+
+        case START_TX:
+
+            write(fd, data, length);
+            currentStateTx = WAIT_ACK;
+
+        break;
+
+        case WAIT_ACK:
+
+            if (read(fd, &receivedByte, 1) > 0){
+
+                if (receivedByte == expectedRR){
+
+                    printf("RR recebido! Próximo frame...\n");
+
+                    if (ns == 0) 
+                        ns = 1;
+
+                     else 
+                        ns = 0;
+                    
+                    currentStateTx = START_TX;
+                }
+                
+                else if (receivedByte == expectedREJ){
+
+                    printf("REJ recebido! Retransmitindo frame...\n");
+                    currentStateTx = RETRANSMIT_TX;
+                }
+            }
+        break;
+
+        case RETRANSMIT_TX:
+
+            write(fd, data, length);
+            currentStateTx = WAIT_ACK;
+        break;
+
+        default:
+
+            currentStateTx = START_TX;
+            break;
+    }
+}
+
 int main(int argc, char *argv[])
 {
     // Program usage: Uses either COM1 or COM2
@@ -94,14 +205,6 @@ int main(int argc, char *argv[])
     
     unsigned char SET[] = {0x7E, 0x03, 0x03, 0x00, 0x7E};
     
-    /*for (int i = 0; i < BUF_SIZE; i++)
-    {
-        buf[i] = 'a' + i % 3;
-    }*/
-
-    // In non-canonical mode, '\n' does not end the writing.
-    // Test this condition by placing a '\n' in the middle of the buffer.
-    // The whole buffer must be sent even with the '\n'.
     buf[5] = '\n';
 
     int bytes = write(fd, SET, 5);
@@ -113,11 +216,13 @@ int main(int argc, char *argv[])
     unsigned char UA[5];
     int bytes2 = read(fd, UA, 5);
     buf[bytes2] = '\0';
-    for(int i = 0; i < sizeof(UA); i++){
-        printf("var=0x%X\n", UA[i]);
-    }
     
+    unsigned char testData[] = "Hello, Receiver!";
+    int dataLength = strlen((char *)testData);
 
+    while (1)
+        state_machine_Tx(fd, testData, dataLength);
+    
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
     {
