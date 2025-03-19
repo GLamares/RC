@@ -41,11 +41,11 @@ bool Other_RCV;
 bool A_RCV;
 bool C_RCV;
 
-unsigned char receivedByte;
-
 void init_SM() {
     currentState = Start;  // Estado inicial
 }
+
+unsigned char receivedByte;
 
 // Função da Máquina de Estados
 void state_machine(unsigned char byte) {
@@ -98,6 +98,190 @@ void state_machine(unsigned char byte) {
         default:
 
             currentState = Start;
+            break;
+    }
+}
+
+typedef enum{
+
+    START_I,
+    FLAG_RCV_I,
+    A_RCV_I,
+    C_RCV_I,
+    BCC1_OK_I,
+    DATA_RCV,//payload
+    BCC2_OK,
+    END_I
+
+}stateIFrame;
+
+stateIFrame currentStateI = START_I;
+
+void init_SM_I() {
+    currentStateI = START_I;  // Estado inicial
+}
+
+void send_ACK(int fd, unsigned char ns, bool is_REJ) {
+    
+    unsigned char A = 0x03;  
+    unsigned char C;
+    
+    if (is_REJ) {
+        
+        if (ns == 0)
+            C = 0x01;
+             // REJ(0)
+        else
+            C = 0x81; // REJ(1)
+    } 
+    
+    else {
+
+        if (ns == 0)
+            C = 0x05; // RR(1)
+
+        else
+            C = 0x85; // RR(0)
+    }
+    unsigned char BCC = A ^ C;
+    unsigned char frame[5] = { 0x7E, A, C, BCC, 0x7E };
+
+    if (is_REJ)
+        printf("Enviando REJ(%d)...\n", ns);
+
+    else
+        printf("Enviando RR(%d)...\n", ns);
+
+    write(fd, frame, 5);
+}
+
+void state_machine_I(unsigned char byte, int fd) {
+
+    static unsigned char address, control, bcc1, ns;//A,C,BCC
+    static unsigned char dataBuffer[BUF_SIZE];
+    static int dataIndex = 0;
+
+    switch (currentStateI) {
+
+        case START_I:
+
+            if (byte == 0x7E)
+                currentStateI = FLAG_RCV_I;
+
+            break;
+
+        case FLAG_RCV_I:
+
+            if (byte == 0x03){  // Endereço válido
+
+                address = byte;
+                currentStateI = A_RCV_I;
+            } 
+            
+            else if (byte != 0x7E) 
+                currentStateI = START_I;
+            
+            break;
+
+        case A_RCV_I:
+
+            if (byte == 0x00) {  // Ns = 0 ou 1
+                
+                control = byte;
+                ns = 0;
+                currentStateI = C_RCV_I;
+            } 
+
+            else if(byte == 0x40){
+
+                control = byte;
+                ns = 1;
+                currentStateI = C_RCV_I;
+            }
+
+            else if (byte == 0x7E) 
+                currentStateI = FLAG_RCV_I;
+            
+            else 
+                currentStateI = START_I;
+            
+            break;
+
+        case C_RCV_I:
+
+            bcc1 = address ^ control;
+
+            if (byte == bcc1){
+
+                currentStateI = BCC1_OK_I;
+                dataIndex = 0;
+            } 
+
+            else if (byte == 0x7E) 
+                currentStateI = FLAG_RCV_I;
+
+            else 
+                currentStateI = START_I;
+            
+            break;
+
+        case BCC1_OK_I:
+
+            if (byte == 0x7E)   // Se encontrar FLAG aqui, erro de frame vazio
+                currentStateI = START_I;
+
+            else{
+
+                dataBuffer[dataIndex++] = byte;
+                currentStateI = DATA_RCV;
+            }
+            break;
+
+        case DATA_RCV:
+
+        if (byte == 0x7E){  // FLAG final
+
+            unsigned char bcc2_calc = 0;
+
+            for (int i = 0; i < dataIndex - 1; i++) 
+                bcc2_calc ^= dataBuffer[i]; 
+
+            if (bcc2_calc == dataBuffer[dataIndex - 1]){
+
+                send_ACK(fd, ns, FALSE);//RR
+                currentStateI = END_I;
+                
+            } 
+            else{
+
+                send_ACK(fd, ns, TRUE);//Rej
+                currentStateI = START_I;
+            }
+        } 
+        else{
+
+            if (dataIndex < BUF_SIZE) 
+                dataBuffer[dataIndex++] = byte;
+
+             else 
+                currentStateI = START_I;
+        }
+        break;
+
+        case BCC2_OK:
+
+            send_ACK(fd, ns, FALSE);
+            currentStateI = END_I;
+            break;
+
+        case END_I:
+
+            currentStateI = START_I;
+            break;
+
+        default:
+
+            currentStateI = START_I;
             break;
     }
 }
@@ -170,6 +354,7 @@ int main(int argc, char *argv[]){
     // Loop for input
 
     init_SM();
+    init_SM_I();
 
     unsigned char buf[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
     unsigned char UA[]={0x7E, 0x04, 0x07, 0X03^0X07, 0x7E};//7E,03,07,03^07,7E
@@ -197,6 +382,19 @@ int main(int argc, char *argv[]){
     // The while() cycle should be changed in order to respect the specifications
     // of the protocol indicated in the Lab guide
 
+    while(currentStateI != END_I){
+        
+        int rec = read(fd, &receivedByte, 1);
+
+        if(rec > 0){
+
+            printf("Recebido: 0x%X\n", receivedByte);
+            state_machine_I(receivedByte, fd);
+        }
+    }
+
+    printf("I frame recebido! Enviando RR");
+    send();
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1){
 

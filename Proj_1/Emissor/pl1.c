@@ -10,14 +10,11 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
-#include <stdbool.h>
-#include <signal.h>
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
 #define BAUDRATE B38400
 #define _POSIX_SOURCE 1 // POSIX compliant source
-#define MAX_RETRIES 3
 
 #define FALSE 0
 #define TRUE 1
@@ -25,96 +22,120 @@
 #define BUF_SIZE 256
 
 volatile int STOP = FALSE;
-unsigned char A = 0x03, C = 0x07, BCC;
-int alarmCount = 0;
-int alarmEnabled = FALSE;
+
+#define BUF_SIZE 256
+#define FLAG 0x7E
+#define A 0x03
+#define C_0 0x00  // Ns = 0
+#define C_1 0x40  // Ns = 1
+#define RR_0 0x05
+#define RR_1 0x85
+#define REJ_0 0x01
+#define REJ_1 0x81
 
 typedef enum{
 
-    Start, // isso é um 0
-    FLAGRCV, // isso é um 1
-    ARCV,
-    CRCV,
-    BCCOK,
-    PARA
+    START_TX,
+    FLAG_TX,
+    A_TX,
+    C_TX,
+    BCC1_TX,
+    DATA_TX,
+    BCC2_TX,
+    FLAG_END_TX,
+    WAIT_ACK,
+    RETRANSMIT_TX
+    
+} stateTxFrame;
 
-} stateNames;
+stateTxFrame currentStateTx = START_TX;
 
-stateNames currentState = Start;
-bool FLAG_RCV;
-bool Other_RCV;
-bool A_RCV;
-bool C_RCV;
+// Variáveis de transmissão
+unsigned char txBuffer[BUF_SIZE];
+unsigned char ns = 0;  // Número de sequência (0 ou 1)
 
-unsigned char receivedByte;
+// Inicializar máquina de estados do transmissor
+void init_SM_Tx(){
 
-void alarmHandler(int signal){
-
-    alarmEnabled = FALSE;
-    alarmCount++;
-
-    printf("Alarm #%d\n", alarmCount);
+    currentStateTx = START_TX;
 }
 
-void state_machine(unsigned char byte){
-    switch (currentState){
+// Função para calcular BCC2 (XOR de todos os bytes de dados)
+unsigned char calculate_BCC2(unsigned char *data, int length){
 
-        case Start:
+    unsigned char bcc2 = 0;
 
-            if (byte == 0x7E)
-                currentState = FLAGRCV;
-            break;
+    for (int i = 0; i < length; i++)
+        bcc2 ^= data[i];
+    
+    return bcc2;
+}
 
-        case FLAGRCV:
+void state_machine_Tx(int fd, unsigned char *data, int length){
 
-            if (byte == A)
-                currentState = ARCV;
-            else if (byte != 0x7E)
-                currentState = Start;
-            break;
+    unsigned char receivedByte;
+    unsigned char expectedRR, expectedREJ;
 
-        case ARCV:
-            if (byte == C)
-                currentState = CRCV;
-            else if (byte == 0x7E)
-                currentState = FLAGRCV;
-            else
-                currentState = Start;
-            break;
+    if (ns == 0){
 
-        case CRCV:
+        expectedRR = RR_1;
+        expectedREJ = REJ_0;
+    } 
+    else{
 
-            if (byte == A^C)
-                currentState = BCCOK;
-            else if (byte == 0x7E)
-                currentState = FLAGRCV;
-            else
-                currentState = Start;
-            break;
+        expectedRR = RR_0;
+        expectedREJ = REJ_1;
+    }
 
-        case BCCOK:
-            if (byte == 0x7E){
-                  // FLAG final recebida
-                currentState = PARA;
-                STOP = 1; // Finaliza a máquina de estados
-            } 
-            else
-                currentState = Start;
-            
-            break;
+    switch (currentStateTx){
+
+        case START_TX:
+
+            write(fd, data, length);
+            currentStateTx = WAIT_ACK;
+
+        break;
+
+        case WAIT_ACK:
+
+            if (read(fd, &receivedByte, 1) > 0){
+
+                if (receivedByte == expectedRR){
+
+                    printf("RR recebido! Próximo frame...\n");
+
+                    if (ns == 0) 
+                        ns = 1;
+
+                     else 
+                        ns = 0;
+                    
+                    currentStateTx = START_TX;
+                }
+                
+                else if (receivedByte == expectedREJ){
+
+                    printf("REJ recebido! Retransmitindo frame...\n");
+                    currentStateTx = RETRANSMIT_TX;
+                }
+            }
+        break;
+
+        case RETRANSMIT_TX:
+
+            write(fd, data, length);
+            currentStateTx = WAIT_ACK;
+        break;
 
         default:
 
-            currentState = Start;
+            currentStateTx = START_TX;
             break;
     }
 }
 
-int main(int argc, char *argv[]){
-    
-    // Set alarm function handler
-    (void)signal(SIGALRM, alarmHandler);
-
+int main(int argc, char *argv[])
+{
     // Program usage: Uses either COM1 or COM2
     const char *serialPortName = argv[1];
 
@@ -158,7 +179,7 @@ int main(int argc, char *argv[]){
     // Set input mode (non-canonical, no echo,...)
     newtio.c_lflag = 0;
     newtio.c_cc[VTIME] = 0; // Inter-character timer unused
-    newtio.c_cc[VMIN] = 0;  // Blocking read until 5 chars received
+    newtio.c_cc[VMIN] = 5;  // Blocking read until 5 chars received
 
     // VTIME e VMIN should be changed in order to protect with a
     // timeout the reception of the following character(s)
@@ -178,61 +199,33 @@ int main(int argc, char *argv[]){
     }
 
     printf("New termios structure set\n");
-    BCC=A^C;
+
     // Create string to send
     unsigned char buf[BUF_SIZE] = {0};
-
+    
     unsigned char SET[] = {0x7E, 0x03, 0x03, 0x00, 0x7E};
     
-    // In non-canonical mode, '\n' does not end the writing.
-    // Test this condition by placing a '\n' in the middle of the buffer.
-    // The whole buffer must be sent even with the '\n'.
-    
     buf[5] = '\n';
+
+    int bytes = write(fd, SET, 5);
+    printf("%d bytes written\n", bytes);
+
+    // Wait until all bytes have been written to the serial port
+    sleep(1);
     
-    currentState = Start;
-    printf("Enviando SET...\n");
-    write(fd, SET, 5);
-    alarmEnabled = TRUE;
-    alarm(3); // Inicia o timer
+    unsigned char UA[5];
+    int bytes2 = read(fd, UA, 5);
+    buf[bytes2] = '\0';
+    
+    unsigned char testData[] = "Hello, Receiver!";
+    int dataLength = strlen((char *)testData);
 
-    // **Loop de retransmissão até receber `UA` ou atingir `MAX_RETRIES`**
-    while (alarmCount < MAX_RETRIES){
-
-        int res = read(fd, &receivedByte, 1);//res ou é 1 ou 0, é 1 se ler um byte e 0 se não
-
-        if (res){
-
-            printf("Recebido: 0x%02X\n", receivedByte);
-            state_machine(receivedByte);
-        }
-
-        if (currentState == PARA){
-
-            printf("UA recebido! Cancelando alarme.\n");
-            alarm(0);
-            alarmEnabled = FALSE;
-            break;
-        }
-
-        // **Se o alarme expirou e `UA` não foi recebido, reenviar `SET`**
-        if (!alarmEnabled && alarmCount < MAX_RETRIES){
-
-            printf("Timeout #%d: Reenviando SET...\n", alarmCount);
-            write(fd, SET, 5);
-            alarmEnabled = TRUE;
-            alarm(3);
-        }
-    }
-
-    if (alarmCount >= MAX_RETRIES) {
-        printf("Máximo de retransmissões atingido. Encerrando emissor.\n");
-        exit(1);
-    }
-
+    while (1)
+        state_machine_Tx(fd, testData, dataLength);
+    
     // Restore the old port settings
-    if (tcsetattr(fd, TCSANOW, &oldtio) == -1){
-        
+    if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
+    {
         perror("tcsetattr");
         exit(-1);
     }
@@ -241,4 +234,3 @@ int main(int argc, char *argv[]){
 
     return 0;
 }
-
