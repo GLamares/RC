@@ -330,7 +330,7 @@ int main(int argc, char *argv[]){
     // Set input mode (non-canonical, no echo,...)
     newtio.c_lflag = 0;
     newtio.c_cc[VTIME] = 0; // Inter-character timer unused
-    newtio.c_cc[VMIN] = 5;  // Blocking read until 5 chars received
+    newtio.c_cc[VMIN] = 0;  // Blocking read until 5 chars received
 
     // VTIME e VMIN should be changed in order to protect with a
     // timeout the reception of the following character(s)
@@ -357,8 +357,8 @@ int main(int argc, char *argv[]){
     init_SM_I();
 
     unsigned char buf[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
-    unsigned char UA[]={0x7E, 0x01, 0x07, 0x06, 0x7E};
-    unsigned char SET[]={0x7E, 0x03, 0x03, 0x00, 0x7E};
+    unsigned char UA[]={0x7E, 0x04, 0x07, 0X03^0X07, 0x7E};//7E,03,07,03^07,7E
+    //unsigned char SET[]={0x7E, 0x03, 0x03, 0x00, 0x7E};
     unsigned char buf2[5];  
 
     printf("Enum: %d\n",currentState);
@@ -406,4 +406,3 @@ int main(int argc, char *argv[]){
 
     return 0;
 }
-
