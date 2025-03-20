@@ -10,6 +10,8 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <signal.h>
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
@@ -20,8 +22,93 @@
 #define TRUE 1
 
 #define BUF_SIZE 256
+#define MAX_RETRIES 3
 
 volatile int STOP = FALSE;
+unsigned char A = 0x03, C = 0x07, BCC;
+int alarmCount = 0;
+int alarmEnabled = FALSE;
+
+typedef enum{
+
+    Start, // isso é um 0
+    FLAGRCV, // isso é um 1
+    ARCV,
+    CRCV,
+    BCCOK,
+    PARA
+
+} stateNames;
+
+stateNames currentState = Start;
+bool FLAG_RCV;
+bool Other_RCV;
+bool A_RCV;
+bool C_RCV;
+
+unsigned char receivedByte;
+
+void alarmHandler(int signal){
+
+    alarmEnabled = FALSE;
+    alarmCount++;
+
+    printf("Alarm #%d\n", alarmCount);
+}
+
+void state_machine(unsigned char byte){
+    switch (currentState){
+
+        case Start:
+
+            if (byte == 0x7E)
+                currentState = FLAGRCV;
+            break;
+
+        case FLAGRCV:
+
+            if (byte == A)
+                currentState = ARCV;
+            else if (byte != 0x7E)
+                currentState = Start;
+            break;
+
+        case ARCV:
+            if (byte == C)
+                currentState = CRCV;
+            else if (byte == 0x7E)
+                currentState = FLAGRCV;
+            else
+                currentState = Start;
+            break;
+
+        case CRCV:
+
+            if (byte == A^C)
+                currentState = BCCOK;
+            else if (byte == 0x7E)
+                currentState = FLAGRCV;
+            else
+                currentState = Start;
+            break;
+
+        case BCCOK:
+            if (byte == 0x7E){
+                  // FLAG final recebida
+                currentState = PARA;
+                STOP = 1; // Finaliza a máquina de estados
+            } 
+            else
+                currentState = Start;
+            
+            break;
+
+        default:
+
+            currentState = Start;
+            break;
+    }
+}
 
 #define BUF_SIZE 256
 #define FLAG 0x7E
@@ -71,6 +158,35 @@ unsigned char calculate_BCC2(unsigned char *data, int length){
     return bcc2;
 }
 
+void send_IFrame(int fd, unsigned char *data, int length) {
+    unsigned char control;
+    
+    if (ns == 0) 
+        control = C_0;
+    
+    else 
+        control = C_1;
+
+    unsigned char bcc1 = A ^ control;
+    unsigned char bcc2 = calculate_BCC2(data, length);
+
+    unsigned char frame[BUF_SIZE + 6];
+    frame[0] = FLAG;
+    frame[1] = A;
+    frame[2] = control;
+    frame[3] = bcc1;
+    
+    // Copia os dados do payload para o frame
+    for (int i = 0; i < length; i++)
+        frame[4 + i] = data[i];
+
+    frame[4 + length] = bcc2;
+    frame[5 + length] = FLAG;
+
+    printf("Enviando IFrame com Ns=%d...\n", ns);
+    write(fd, frame, length + 6);
+}
+
 void state_machine_Tx(int fd, unsigned char *data, int length){
 
     unsigned char receivedByte;
@@ -91,44 +207,50 @@ void state_machine_Tx(int fd, unsigned char *data, int length){
 
         case START_TX:
 
-            write(fd, data, length);
+            send_IFrame(fd, data, length);
+            alarmEnabled = TRUE;
+            alarm(3); // Timeout para ACK/NACK
             currentStateTx = WAIT_ACK;
-
-        break;
+            break;
 
         case WAIT_ACK:
 
             if (read(fd, &receivedByte, 1) > 0){
 
-                if (receivedByte == expectedRR){
+                printf("Recebido: 0x%02X\n", receivedByte);
 
-                    printf("RR recebido! Próximo frame...\n");
+                if (receivedByte == expectedRR) {
 
-                    if (ns == 0) 
-                        ns = 1;
-
-                     else 
-                        ns = 0;
-                    
+                    printf("RR recebido! Enviando próximo frame...\n");
+                    ns = 1 - ns; // Alterna Ns
                     currentStateTx = START_TX;
                 }
-                
                 else if (receivedByte == expectedREJ){
 
                     printf("REJ recebido! Retransmitindo frame...\n");
                     currentStateTx = RETRANSMIT_TX;
                 }
             }
-        break;
+
+            if (!alarmEnabled && alarmCount < MAX_RETRIES){
+
+                printf("Timeout #%d: Reenviando IFrame...\n", alarmCount);
+                send_IFrame(fd, data, length);
+                alarmEnabled = TRUE;
+                alarm(3);
+            }
+            break;
 
         case RETRANSMIT_TX:
 
-            write(fd, data, length);
+            send_IFrame(fd, data, length);
+            alarmEnabled = TRUE;
+            alarm(3);
             currentStateTx = WAIT_ACK;
-        break;
+            break;
 
         default:
-
+        
             currentStateTx = START_TX;
             break;
     }
@@ -179,7 +301,7 @@ int main(int argc, char *argv[])
     // Set input mode (non-canonical, no echo,...)
     newtio.c_lflag = 0;
     newtio.c_cc[VTIME] = 0; // Inter-character timer unused
-    newtio.c_cc[VMIN] = 5;  // Blocking read until 5 chars received
+    newtio.c_cc[VMIN] = 0;  // Blocking read until 5 chars received
 
     // VTIME e VMIN should be changed in order to protect with a
     // timeout the reception of the following character(s)
@@ -207,8 +329,45 @@ int main(int argc, char *argv[])
     
     buf[5] = '\n';
 
-    int bytes = write(fd, SET, 5);
-    printf("%d bytes written\n", bytes);
+    currentState = Start;
+    printf("Enviando SET...\n");
+    write(fd, SET, 5);
+    alarmEnabled = TRUE;
+    alarm(3); // Inicia o timer
+
+    // **Loop de retransmissão até receber UA ou atingir MAX_RETRIES**
+    while (alarmCount < MAX_RETRIES){
+
+        int res = read(fd, &receivedByte, 1);//res ou é 1 ou 0, é 1 se ler um byte e 0 se não
+
+        if (res){
+
+            printf("Recebido: 0x%02X\n", receivedByte);
+            state_machine(receivedByte);
+        }
+
+        if (currentState == PARA){
+
+            printf("UA recebido! Cancelando alarme.\n");
+            alarm(0);
+            alarmEnabled = FALSE;
+            break;
+        }
+
+        // **Se o alarme expirou e UA não foi recebido, reenviar SET**
+        if (!alarmEnabled && alarmCount < MAX_RETRIES){
+
+            printf("Timeout #%d: Reenviando SET...\n", alarmCount);
+            write(fd, SET, 5);
+            alarmEnabled = TRUE;
+            alarm(3);
+        }
+    }
+
+    if (alarmCount >= MAX_RETRIES) {
+        printf("Máximo de retransmissões atingido. Encerrando emissor.\n");
+        exit(1);
+    }
 
     // Wait until all bytes have been written to the serial port
     sleep(1);

@@ -21,6 +21,15 @@
 #define TRUE 1
 
 #define BUF_SIZE 256
+#define FLAG 0x7E
+#define C_0 0x00
+#define C_1 0x40
+#define RR_0 0x05
+#define RR_1 0x85
+#define REJ_0 0x01
+#define REJ_1 0x81
+
+#define BUF_SIZE 256
 
 volatile int STOP = FALSE;
 unsigned char A = 0x03, C = 0x03, BCC;
@@ -122,86 +131,78 @@ void init_SM_I() {
 }
 
 void send_ACK(int fd, unsigned char ns, bool is_REJ) {
-    
-    unsigned char A = 0x03;  
     unsigned char C;
-    
+
     if (is_REJ) {
-        
-        if (ns == 0)
-            C = 0x01;
-             // REJ(0)
-        else
-            C = 0x81; // REJ(1)
-    } 
-    
-    else {
-
-        if (ns == 0)
-            C = 0x05; // RR(1)
-
-        else
-            C = 0x85; // RR(0)
+        if (ns == 0) {
+            C = REJ_0;  // REJ(0)
+        } else {
+            C = REJ_1;  // REJ(1)
+        }
+    } else {
+        if (ns == 0) {
+            C = RR_1;   // RR(1)
+        } else {
+            C = RR_0;   // RR(0)
+        }
     }
-    unsigned char BCC = A ^ C;
-    unsigned char frame[5] = { 0x7E, A, C, BCC, 0x7E };
 
-    if (is_REJ)
+    unsigned char BCC = A ^ C;
+    unsigned char frame[5] = {FLAG, A, C, BCC, FLAG};
+
+    if (is_REJ) 
         printf("Enviando REJ(%d)...\n", ns);
 
-    else
+     else 
         printf("Enviando RR(%d)...\n", ns);
 
     write(fd, frame, 5);
 }
 
-void state_machine_I(unsigned char byte, int fd) {
+void state_machine_I(unsigned char byte, int fd){
 
-    static unsigned char address, control, bcc1, ns;//A,C,BCC
+    static unsigned char address, control, bcc1, ns;
     static unsigned char dataBuffer[BUF_SIZE];
     static int dataIndex = 0;
 
-    switch (currentStateI) {
+    switch (currentStateI){
 
         case START_I:
 
-            if (byte == 0x7E)
+            if (byte == FLAG) 
                 currentStateI = FLAG_RCV_I;
-
+            
             break;
 
         case FLAG_RCV_I:
 
-            if (byte == 0x03){  // Endereço válido
+            if (byte == A){
 
                 address = byte;
                 currentStateI = A_RCV_I;
             } 
-            
-            else if (byte != 0x7E) 
+            else if (byte != FLAG) 
                 currentStateI = START_I;
             
             break;
 
         case A_RCV_I:
+        
+            if (byte == C_0){
 
-            if (byte == 0x00) {  // Ns = 0 ou 1
-                
                 control = byte;
                 ns = 0;
                 currentStateI = C_RCV_I;
             } 
-
-            else if(byte == 0x40){
+            else if (byte == C_1){
 
                 control = byte;
                 ns = 1;
                 currentStateI = C_RCV_I;
-            }
-
-            else if (byte == 0x7E) 
+            } 
+            else if (byte == FLAG) 
                 currentStateI = FLAG_RCV_I;
-            
+
             else 
                 currentStateI = START_I;
             
@@ -216,8 +217,7 @@ void state_machine_I(unsigned char byte, int fd) {
                 currentStateI = BCC1_OK_I;
                 dataIndex = 0;
             } 
-
-            else if (byte == 0x7E) 
+            else if (byte == FLAG) 
                 currentStateI = FLAG_RCV_I;
 
             else 
@@ -227,9 +227,9 @@ void state_machine_I(unsigned char byte, int fd) {
 
         case BCC1_OK_I:
 
-            if (byte == 0x7E)   // Se encontrar FLAG aqui, erro de frame vazio
-                currentStateI = START_I;
-
+            if (byte == FLAG)
+                currentStateI = START_I;  // Erro: frame vazio
+            
             else{
 
                 dataBuffer[dataIndex++] = byte;
@@ -239,39 +239,38 @@ void state_machine_I(unsigned char byte, int fd) {
 
         case DATA_RCV:
 
-        if (byte == 0x7E){  // FLAG final
+            if (byte == FLAG){
+                // Calcular BCC2
+                unsigned char bcc2_calc = 0;
 
-            unsigned char bcc2_calc = 0;
-
-            for (int i = 0; i < dataIndex - 1; i++) 
-                bcc2_calc ^= dataBuffer[i]; 
-
-            if (bcc2_calc == dataBuffer[dataIndex - 1]){
-
-                send_ACK(fd, ns, FALSE);//RR
-                currentStateI = END_I;
+                for (int i = 0; i < dataIndex - 1; i++) 
+                    bcc2_calc ^= dataBuffer[i];
                 
+                if (bcc2_calc == dataBuffer[dataIndex - 1]){
+
+                    printf("Dados Recebidos: ");
+
+                    for (int i = 0; i < dataIndex - 1; i++) 
+                        printf("%c", dataBuffer[i]); // Exibe a string recebida
+                    
+                    printf("\n");
+                    send_ACK(fd, ns, FALSE); // Enviar RR
+                    currentStateI = END_I;
+                } 
+                else{
+
+                    printf("Erro no BCC2, enviando REJ...\n");
+                    send_ACK(fd, ns, TRUE); // Enviar REJ
+                    currentStateI = START_I;
+                }
             } 
             else{
-
-                send_ACK(fd, ns, TRUE);//Rej
-                currentStateI = START_I;
+                if (dataIndex < BUF_SIZE)
+                    dataBuffer[dataIndex++] = byte;
+                
+                else 
+                    currentStateI = START_I;
             }
-        } 
-        else{
-
-            if (dataIndex < BUF_SIZE) 
-                dataBuffer[dataIndex++] = byte;
-
-             else 
-                currentStateI = START_I;
-        }
-        break;
-
-        case BCC2_OK:
-
-            send_ACK(fd, ns, FALSE);
-            currentStateI = END_I;
             break;
 
         case END_I:
@@ -394,7 +393,6 @@ int main(int argc, char *argv[]){
     }
 
     printf("I frame recebido! Enviando RR");
-    send();
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1){
 
