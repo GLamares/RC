@@ -57,6 +57,7 @@ void alarmHandler(int signal){
 }
 
 void state_machine(unsigned char byte){
+
     switch (currentState){
 
         case Start:
@@ -69,15 +70,20 @@ void state_machine(unsigned char byte){
 
             if (byte == A)
                 currentState = ARCV;
+
             else if (byte != 0x7E)
                 currentState = Start;
+
             break;
 
         case ARCV:
+        
             if (byte == C)
                 currentState = CRCV;
+
             else if (byte == 0x7E)
                 currentState = FLAGRCV;
+
             else
                 currentState = Start;
             break;
@@ -86,13 +92,17 @@ void state_machine(unsigned char byte){
 
             if (byte == A^C)
                 currentState = BCCOK;
+
             else if (byte == 0x7E)
                 currentState = FLAGRCV;
+
             else
                 currentState = Start;
+
             break;
 
         case BCCOK:
+
             if (byte == 0x7E){
                   // FLAG final recebida
                 currentState = PARA;
@@ -110,7 +120,6 @@ void state_machine(unsigned char byte){
     }
 }
 
-#define BUF_SIZE 256
 #define FLAG 0x7E
 #define A 0x03
 #define C_0 0x00  // Ns = 0
@@ -158,7 +167,8 @@ unsigned char calculate_BCC2(unsigned char *data, int length){
     return bcc2;
 }
 
-void send_IFrame(int fd, unsigned char *data, int length) {
+void send_IFrame(int fd, unsigned char *data, int length){
+
     unsigned char control;
     
     if (ns == 0) 
@@ -371,17 +381,58 @@ int main(int argc, char *argv[])
 
     // Wait until all bytes have been written to the serial port
     sleep(1);
-    
-    unsigned char UA[5];
-    int bytes2 = read(fd, UA, 5);
-    buf[bytes2] = '\0';
-    
+
+    init_SM_Tx();
+
     unsigned char testData[] = "Hello, Receiver!";
     int dataLength = strlen((char *)testData);
+    alarmCount = 0;
 
-    while (1)
-        state_machine_Tx(fd, testData, dataLength);
-    
+    printf("Enviando primeiro I-Frame...\n");
+    send_IFrame(fd, testData, dataLength);
+    alarmEnabled = TRUE;
+    alarm(3);
+
+    while (alarmCount < MAX_RETRIES){
+
+        int rec = read(fd, &receivedByte, 1);
+        if (rec > 0){
+
+            printf("Recebido: 0x%02X\n", receivedByte);
+
+            if (receivedByte == RR_1 || receivedByte == RR_0){
+
+                printf("RR recebido! Enviando próximo frame...\n");
+                ns = 1 - ns;
+                alarm(0);
+                alarmEnabled = FALSE;
+                send_IFrame(fd, testData, dataLength);
+                alarmEnabled = TRUE;
+                alarm(3);
+            }
+
+            else if (receivedByte == REJ_1 || receivedByte == REJ_0){
+
+                printf("REJ recebido! Reenviando frame...\n");
+                send_IFrame(fd, testData, dataLength);
+                alarmEnabled = TRUE;
+                alarm(3);
+            }
+        }
+
+        if (!alarmEnabled && alarmCount < MAX_RETRIES) {
+            printf("Timeout #%d: Reenviando I-Frame...\n", alarmCount);
+            send_IFrame(fd, testData, dataLength);
+            alarmEnabled = TRUE;
+            alarm(3);
+        }
+    }
+
+    if (alarmCount >= MAX_RETRIES) {
+        printf("Máximo de retransmissões atingido. Encerrando transmissão.\n");
+        exit(1);
+    }
+
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
     {

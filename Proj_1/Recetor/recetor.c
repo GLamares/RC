@@ -58,58 +58,70 @@ unsigned char receivedByte;
 
 // Função da Máquina de Estados
 void state_machine(unsigned char byte) {
-    switch (currentState){
+    printf("DEBUG: Entrando em state_machine - Estado Atual: %d, Byte recebido: 0x%X\n", currentState, byte);
 
+    switch (currentState) {
         case Start:
-
-            if (byte == 0x7E)
+            if (byte == 0x7E) {
+                printf("DEBUG: FLAG inicial recebida\n");
                 currentState = FLAGRCV;
+            }
             break;
 
         case FLAGRCV:
-
-            if (byte == A)
+            if (byte == A) {
+                printf("DEBUG: Campo A recebido corretamente\n");
                 currentState = ARCV;
-            else if (byte != 0x7E)
+            } else if (byte != 0x7E) {
+                printf("DEBUG: Byte inesperado, voltando para Start\n");
                 currentState = Start;
+            }
             break;
 
         case ARCV:
-            if (byte == C)
+            if (byte == C) {
+                printf("DEBUG: Campo C recebido corretamente\n");
                 currentState = CRCV;
-            else if (byte == 0x7E)
+            } else if (byte == 0x7E) {
+                printf("DEBUG: FLAG recebida novamente, resetando para FLAGRCV\n");
                 currentState = FLAGRCV;
-            else
+            } else {
+                printf("DEBUG: Byte inesperado, resetando para Start\n");
                 currentState = Start;
+            }
             break;
 
         case CRCV:
-
-            if (byte == BCC)
+            if (byte == (A ^ C)) {
+                printf("DEBUG: BCC correto\n");
                 currentState = BCCOK;
-            else if (byte == 0x7E)
+            } else if (byte == 0x7E) {
+                printf("DEBUG: FLAG recebida novamente, resetando para FLAGRCV\n");
                 currentState = FLAGRCV;
-            else
+            } else {
+                printf("DEBUG: BCC incorreto, resetando para Start\n");
                 currentState = Start;
+            }
             break;
 
         case BCCOK:
-            if (byte == 0x7E){
-                  // FLAG final recebida
+            if (byte == 0x7E) {
+                printf("DEBUG: FLAG final recebida - SET completo!\n");
                 currentState = PARA;
-                STOP = 1; // Finaliza a máquina de estados
-            } 
-            else
+                STOP = 1;
+            } else {
+                printf("DEBUG: Byte inesperado após BCC, resetando para Start\n");
                 currentState = Start;
-            
+            }
             break;
 
         default:
-
+            printf("DEBUG: Estado desconhecido, resetando para Start\n");
             currentState = Start;
             break;
     }
 }
+
 
 typedef enum{
 
