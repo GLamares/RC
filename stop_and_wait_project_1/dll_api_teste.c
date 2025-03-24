@@ -85,10 +85,28 @@ unsigned char calculateBCC2(const unsigned char* data, int length) {
     return bcc2;
 }
 
-void sendSupervisionFrame(int fd, unsigned char A, unsigned char C) {
+void sendSETFrame(int fd, unsigned char A, unsigned char C) {
     unsigned char frame[5] = {FLAG, A, C, A ^ C, FLAG};
     write(fd, frame, 5);
-    printf("Sent supervision frame: A=0x%02X, C=0x%02X\n", A, C);
+    printf("Sent SET frame\n");
+}
+
+void sendUAFrame(int fd, unsigned char A, unsigned char C) {
+    unsigned char frame[5] = {FLAG, A, C, A ^ C, FLAG};
+    write(fd, frame, 5);
+    printf("Sent UA frame\n");
+}
+
+void sendIFrame(int fd, unsigned char A, unsigned char C) {
+    unsigned char frame[5] = {FLAG, A, C, A ^ C, FLAG};
+    write(fd, frame, 5);
+    printf("Sent I frame\n");
+}
+
+void sendDiscFrame(int fd, unsigned char A, unsigned char C) {
+    unsigned char frame[5] = {FLAG, A, C, A ^ C, FLAG};
+    write(fd, frame, 5);
+    printf("Sent Disc frame\n");
 }
 
 int readSupervisionFrame(int fd, unsigned char expectedC) {
@@ -128,7 +146,7 @@ int llopen(const char* port, int isTransmitter) {
     if (isTransmitter) {
         int attempts = 0;
         while (attempts < MAX_RETRIES) {
-            sendSupervisionFrame(serial_fd, A_SENDER, C_SET);
+            sendSETFrame(serial_fd, A_SENDER, C_SET);
             alarmEnabled = true;
             alarm(TIMEOUT);
             if (readSupervisionFrame(serial_fd, C_UA)) return serial_fd;
@@ -138,7 +156,7 @@ int llopen(const char* port, int isTransmitter) {
         return -1;
     } else {
         if (readSupervisionFrame(serial_fd, C_SET)) {
-            sendSupervisionFrame(serial_fd, A_RECEIVER, C_UA);
+            sendUAFrame(serial_fd, A_RECEIVER, C_UA);
             return serial_fd;
         }
         return -1;
@@ -228,7 +246,7 @@ int llread(int fd, unsigned char* buffer) {
                     int destuffed_len = byteDestuff(data, idx, destuffed);
                     if (destuffed_len < 1) {
                         printf("Destuffing failed");
-                        sendSupervisionFrame(fd, A_RECEIVER, currentNs ? C_REJ_1 : C_REJ_0);
+                        sendIFrame(fd, A_RECEIVER, currentNs ? C_REJ_1 : C_REJ_0);
                         return -1;
                     }
 
@@ -239,11 +257,11 @@ int llread(int fd, unsigned char* buffer) {
                     if (calculated_bcc2 == received_bcc2) {
                         memcpy(buffer, destuffed, destuffed_len - 1);
                         currentNs = 1 - currentNs;
-                        sendSupervisionFrame(fd, A_RECEIVER, currentNs ? C_RR_1 : C_RR_0);
+                        sendIFrame(fd, A_RECEIVER, currentNs ? C_RR_1 : C_RR_0);
                         return destuffed_len - 1;
                     } else {
-                        printf("❌ BCC2 mismatch");
-                        sendSupervisionFrame(fd, A_RECEIVER, currentNs ? C_REJ_1 : C_REJ_0);
+                        printf("BCC2 mismatch");
+                        sendIFrame(fd, A_RECEIVER, currentNs ? C_REJ_1 : C_REJ_0);
                         return -1;
                     }
                 } else {
@@ -259,11 +277,11 @@ int llread(int fd, unsigned char* buffer) {
 int llclose(int fd) {
     int attempts = 0;
     while (attempts < MAX_RETRIES) {
-        sendSupervisionFrame(fd, A_SENDER, C_DISC);
+        sendDiscFrame(fd, A_SENDER, C_DISC);
         alarmEnabled = true;
         alarm(TIMEOUT);
         if (readSupervisionFrame(fd, C_DISC)) {
-            sendSupervisionFrame(fd, A_RECEIVER, C_UA);
+            sendUAFrame(fd, A_RECEIVER, C_UA);
             close(fd);
             printf("Connection closed successfully.\n");
             return 1;
