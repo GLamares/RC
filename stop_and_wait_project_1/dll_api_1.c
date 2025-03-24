@@ -34,6 +34,7 @@ int serial_fd;
 void alarm_handler(int signo) {
     alarmEnabled = false;
     alarmCount++;
+    printf("Alarm #%d\n", alarmCount);
 }
 
 unsigned char calculateBCC2(const unsigned char* data, int length) {
@@ -77,7 +78,7 @@ int llopen(const char* port, int isTransmitter) {
     newtio.c_oflag = 0;
     newtio.c_lflag = 0;
     newtio.c_cc[VTIME] = 0;
-    newtio.c_cc[VMIN] = 1;
+    newtio.c_cc[VMIN] = 0;
 
     tcflush(serial_fd, TCIOFLUSH);
     if (tcsetattr(serial_fd, TCSANOW, &newtio) != 0) return -1;
