@@ -106,7 +106,8 @@ int llopen(const char* port, int isTransmitter) {
 
 int llwrite(int fd, unsigned char* buffer, int length) {
     unsigned char frame[BUF_SIZE + 6];
-    unsigned char control = currentNs ? C_I_1 : C_I_0;
+    int controlNs = currentNs;
+    unsigned char control = controlNs ? C_I_1 : C_I_0;
     frame[0] = FLAG;
     frame[1] = A_SENDER;
     frame[2] = control;
@@ -116,7 +117,7 @@ int llwrite(int fd, unsigned char* buffer, int length) {
     frame[4 + length] = bcc2;
     frame[5 + length] = FLAG;
 
-    printf("Sending frame with Ns=%d and length=%d, BCC2=0x%02X\n", currentNs, length, bcc2);
+    printf("Sending frame with Ns=%d and length=%d, BCC2=0x%02X\n", controlNs, length, bcc2);
 
     int attempts = 0;
     while (attempts < MAX_RETRIES) {
@@ -125,13 +126,13 @@ int llwrite(int fd, unsigned char* buffer, int length) {
         alarm(TIMEOUT);
         unsigned char buf;
         while (alarmEnabled && read(fd, &buf, 1) > 0) {
-            if ((currentNs == 0 && buf == C_RR_1) || (currentNs == 1 && buf == C_RR_0)) {
-                printf("Received RR for Ns=%d\n", currentNs);
-                currentNs = 1 - currentNs;
+            if ((controlNs == 0 && buf == C_RR_1) || (controlNs == 1 && buf == C_RR_0)) {
+                printf("Received RR for Ns=%d\n", controlNs);
+                currentNs = 1 - controlNs;
                 alarm(0);
                 return length;
-            } else if ((currentNs == 0 && buf == C_REJ_0) || (currentNs == 1 && buf == C_REJ_1)) {
-                printf("Received REJ for Ns=%d\n", currentNs);
+            } else if ((controlNs == 0 && buf == C_REJ_0) || (controlNs == 1 && buf == C_REJ_1)) {
+                printf("Received REJ for Ns=%d\n", controlNs);
                 break;
             }
         }
@@ -182,11 +183,11 @@ int llread(int fd, unsigned char* buffer) {
                     if (calculated_bcc2 == received_bcc2) {
                         memcpy(buffer, data, idx - 1);
                         currentNs = 1 - currentNs;
-                        sendSupervisionFrame(fd, A_RECEIVER, currentNs ? C_RR_1 : C_RR_0);
+                        sendIFrame(fd, A_RECEIVER, currentNs ? C_RR_1 : C_RR_0);
                         return idx - 1;
                     } else {
                         printf("BCC2 error: rejecting frame\n");
-                        sendSupervisionFrame(fd, A_RECEIVER, currentNs ? C_REJ_1 : C_REJ_0);
+                        sendIFrame(fd, A_RECEIVER, currentNs ? C_REJ_1 : C_REJ_0);
                         return -1;
                     }
                 } else {

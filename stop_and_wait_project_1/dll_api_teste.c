@@ -212,7 +212,7 @@ int llread(int fd, unsigned char* buffer) {
     unsigned char data[BUF_SIZE * 2]; // support for stuffed data
     unsigned char expectedControl = currentNs ? C_I_1 : C_I_0;
 
-    printf("Waiting for I-frame with Ns=%d (expected C=0x%02X)", currentNs, expectedControl);
+    printf("Waiting for I-frame with Ns=%d (expected C=0x%02X)\n", currentNs, expectedControl);
 
     while (1) {
         if (read(fd, &byte, 1) <= 0) continue;
@@ -227,7 +227,7 @@ int llread(int fd, unsigned char* buffer) {
                 else state = 0;
                 break;
             case 2:
-                printf("Receiver: expected C=0x%02X, received=0x%02X", expectedControl, byte);
+                printf("Receiver: expected C=0x%02X, received=0x%02X\n", expectedControl, byte);
                 if (byte == expectedControl) { C = byte; state = 3; }
                 else state = 0;
                 break;
@@ -238,21 +238,21 @@ int llread(int fd, unsigned char* buffer) {
             case 4:
                 if (byte == FLAG) {
                     if (idx < 1) {
-                        printf("Error: Frame too short");
+                        printf("Error: Frame too short\n");
                         return -1;
                     }
 
                     unsigned char destuffed[BUF_SIZE * 2];
                     int destuffed_len = byteDestuff(data, idx, destuffed);
                     if (destuffed_len < 1) {
-                        printf("Destuffing failed");
+                        printf("Destuffing failed\n");
                         sendIFrame(fd, A_RECEIVER, currentNs ? C_REJ_1 : C_REJ_0);
                         return -1;
                     }
 
                     unsigned char received_bcc2 = destuffed[destuffed_len - 1];
                     unsigned char calculated_bcc2 = calculateBCC2(destuffed, destuffed_len - 1);
-                    printf("BCC2 check: received=0x%02X, calculated=0x%02X", received_bcc2, calculated_bcc2);
+                    printf("BCC2 check: received=0x%02X, calculated=0x%02X\n", received_bcc2, calculated_bcc2);
 
                     if (calculated_bcc2 == received_bcc2) {
                         memcpy(buffer, destuffed, destuffed_len - 1);
@@ -260,7 +260,7 @@ int llread(int fd, unsigned char* buffer) {
                         sendIFrame(fd, A_RECEIVER, currentNs ? C_RR_1 : C_RR_0);
                         return destuffed_len - 1;
                     } else {
-                        printf("BCC2 mismatch");
+                        printf("BCC2 mismatch\n");
                         sendIFrame(fd, A_RECEIVER, currentNs ? C_REJ_1 : C_REJ_0);
                         return -1;
                     }
