@@ -75,6 +75,8 @@ int serial_fd;
 void alarm_handler(int signo) {
     alarmEnabled = false;
     alarmCount++;
+
+    printf("Alarm #%d\n", alarmCount);
 }
 
 unsigned char calculateBCC2(const unsigned char* data, int length) {
@@ -144,14 +146,28 @@ int llopen(const char* port, int isTransmitter) {
     signal(SIGALRM, alarm_handler);
 
     if (isTransmitter) {
-        int attempts = 0;
-        while (attempts < MAX_RETRIES) {
+        
+        while (alarmCount < MAX_RETRIES) {
+
             sendSETFrame(serial_fd, A_SENDER, C_SET);
             alarmEnabled = true;
             alarm(TIMEOUT);
-            if (readSupervisionFrame(serial_fd, C_UA)) return serial_fd;
-            while (alarmEnabled);
-            attempts++;
+            if (readSupervisionFrame(serial_fd, C_UA)) {
+                
+                printf("UA recebido! Cancelando alarme.\n");
+                alarm(0);
+                alarmEnabled = false;
+                return serial_fd;
+                break;
+            }
+
+            if (!alarmEnabled && alarmCount < MAX_RETRIES){
+
+                printf("Timeout #%d: Reenviando SET...\n", alarmCount);
+                sendSETFrame(serial_fd, A_SENDER, C_SET);
+                alarmEnabled = true;
+                alarm(3);
+            }
         }
         return -1;
     } else {
@@ -181,8 +197,8 @@ int llwrite(int fd, unsigned char* buffer, int length) {
 
     printf("Sending frame with Ns=%d and length=%d, BCC2=0x%02X\n", currentNs, length, bcc2);
 
-    int attempts = 0;
-    while (attempts < MAX_RETRIES) {
+    while (alarmCount < MAX_RETRIES){
+
         write(fd, frame, 5 + stuffed_len + bcc2_len);
         alarmEnabled = true;
         alarm(TIMEOUT);
@@ -193,18 +209,19 @@ int llwrite(int fd, unsigned char* buffer, int length) {
                 currentNs = 1 - currentNs;
                 alarm(0);
                 return length;
+                break;
             } else if ((currentNs == 0 && buf == C_REJ_0) || (currentNs == 1 && buf == C_REJ_1)) {
                 printf("Received REJ for Ns=%d\n", currentNs);
                 break;
             }
         }
         alarmEnabled = false;
-        attempts++;
     }
     return -1;
 }
 
-int llread(int fd, unsigned char* buffer) {
+int llread(int fd, unsigned char* buffer){
+
     unsigned char byte;
     int state = 0;
     unsigned char A, C, BCC1;
@@ -274,20 +291,24 @@ int llread(int fd, unsigned char* buffer) {
     return -1;
 }
 
-int llclose(int fd) {
-    int attempts = 0;
-    while (attempts < MAX_RETRIES) {
+int llclose(int fd){
+
+    while (alarmCount < MAX_RETRIES){
+
         sendDiscFrame(fd, A_SENDER, C_DISC);
         alarmEnabled = true;
         alarm(TIMEOUT);
-        if (readSupervisionFrame(fd, C_DISC)) {
+        if (readSupervisionFrame(fd, C_DISC)){
+
+            printf("Disc recebido! Cancelando alarme.\n");
+            alarm(0);
+            alarmEnabled = false;
+            
             sendUAFrame(fd, A_RECEIVER, C_UA);
             close(fd);
             printf("Connection closed successfully.\n");
             return 1;
         }
-        while (alarmEnabled);
-        attempts++;
     }
     return -1;
 }
