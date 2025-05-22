@@ -78,7 +78,11 @@ int main(int argc, char* argv[]){
     send_command(control_sock, buffer);
     read_response(control_sock, buffer); // 150
 
-    FILE* f = fopen(path, "wb");
+    char* filename = strrchr(path, '/');
+    filename = filename ? filename + 1 : path;  // se não houver '/', usar o path inteiro
+
+    FILE* f = fopen(filename, "wb");
+    //FILE* f = fopen(path, "wb");
     if (!f){
 
         perror("fopen");
